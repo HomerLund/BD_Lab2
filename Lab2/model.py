@@ -2,15 +2,15 @@ import psycopg
 import time
 from sqlalchemy import create_engine, Column, Integer, String, DateTime, ForeignKey, DOUBLE_PRECISION
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import sessionmaker, relationship
 from sqlalchemy import text
 
 
-# Базовий клас для моделей
+
 Base = declarative_base()
 
 
-# Модель таблиці User
+
 class Factory(Base):
     __tablename__ = "factory"
 
@@ -18,6 +18,9 @@ class Factory(Base):
     name = Column(String(30), nullable=False)
     specialization = Column(String(60), nullable=False)
     address = Column(String(70), unique=True, nullable=False)
+    
+    devices = relationship("Device", back_populates="factory")
+    buys = relationship("Buy", back_populates="factory")
 
 class Device(Base):
     __tablename__ = "device"
@@ -29,6 +32,9 @@ class Device(Base):
     factory_id = Column(Integer, ForeignKey('factory.factory_id'), nullable=False)
     date = Column(DateTime, nullable=False)
     
+    factory = relationship("Factory", back_populates="devices")
+    components = relationship("Components", back_populates="device")
+    
 class Components(Base):
     __tablename__ = "components"
 
@@ -37,11 +43,22 @@ class Components(Base):
     weight = Column(DOUBLE_PRECISION, nullable=False)
     device_id = Column(Integer,  ForeignKey('device.device_id'))
     
+    device = relationship("Device", back_populates="components")
+    buys = relationship("Buy", back_populates="component")
+    component_category = relationship("Component_Category", back_populates="component")
+    
 class Component_Category(Base):
     __tablename__ = "component_category"
 
     name = Column(String(20), primary_key=True, nullable=False)
     category = Column(String(30), nullable=False)
+    
+    name = Column(String(20), primary_key=True, nullable=False)
+    category = Column(String(30), nullable=False)
+    
+    component = relationship("Components", back_populates="component_category")
+    
+
     
 class Buy(Base):
     __tablename__ = "buy"
@@ -50,6 +67,9 @@ class Buy(Base):
     factory_id = Column(Integer, ForeignKey('factory.factory_id'), nullable=False)
     date = Column(DateTime, nullable=False)
     price = Column(DOUBLE_PRECISION, nullable=False)
+    
+    factory = relationship("Factory", back_populates="buys")
+    component = relationship("Components", back_populates="buys")
 
 class Model:
     def __init__(self):
@@ -85,70 +105,76 @@ class Model:
 
         start_time = time.time()
 
-        query = text("""
-            SELECT f.factory_id, f.name, f.address, d.name, COUNT(*) as count
-            FROM device d
-            JOIN factory f ON d.factory_id = f.factory_id
-            WHERE f.factory_id = :fk
-            GROUP BY f.factory_id, d.name
-            ORDER BY f.factory_id ASC
-        """)
-        
-        result = session.execute(query, {'fk': FK}).fetchall()
+        factory = session.query(Factory).filter_by(factory_id=FK).first()
 
         end_time = time.time()
-        duration = end_time - start_time
-        
-        column_names = [col[0] for col in session.execute(query, {'fk': FK}).cursor.description]
-        
-        return result, column_names, duration * 1000
+        duration = (end_time - start_time) * 1000
+
+        device_counts = {}
+        for device in factory.devices:
+            device_counts[device.name] = device_counts.get(device.name, 0) + 1
+
+        rows = [
+            (factory.factory_id, factory.name, factory.address, device_name, count)
+            for device_name, count in device_counts.items()
+        ]
+        column_names = ["factory_id", "factory_name", "address", "device_name", "count"]
+        return rows, column_names, duration
 
     def get_ComponentsOfDevice(self, FK):
         session = self.Session()
 
         start_time = time.time()
 
-        query = text("""
-            SELECT d.device_id, d.name, c.name, AVG(c.weight) as avg_weight
-            FROM device d
-            JOIN components c ON d.device_id = c.device_id
-            WHERE d.device_id = :fk
-            GROUP BY d.device_id, c.name
-            ORDER BY d.device_id ASC
-        """)
-
-        result = session.execute(query, {'fk': FK}).fetchall()
+        device = session.query(Device).filter_by(device_id=FK).first()
 
         end_time = time.time()
-        duration = end_time - start_time
+        duration = (end_time - start_time) * 1000
 
-        column_names = [col[0] for col in session.execute(query, {'fk': FK}).cursor.description]
+        component_averages = {}
+        for component in device.components:
+            if component.name not in component_averages:
+                component_averages[component.name] = []
+            component_averages[component.name].append(component.weight)
 
-        return result, column_names, duration * 1000
+        rows = [
+            (device.device_id, device.name, component_name, sum(weights) / len(weights))
+            for component_name, weights in component_averages.items()
+        ]
+        column_names = ["device_id", "device_name", "component_name", "avg_weight"]
+        return rows, column_names, duration
 
     def get_BuyOfComponents(self, first_date, second_date, FK):
         session = self.Session()
 
         start_time = time.time()
 
-        query = text("""
-            SELECT f.factory_id, f.name, c.component_id, c.name, b.date, b.price
-            FROM buy b
-            JOIN factory f ON b.factory_id = f.factory_id
-            JOIN components c ON b.component_id = c.component_id
-            WHERE b.date BETWEEN :first_date AND :second_date
-            AND f.factory_id = :fk
-            ORDER BY f.factory_id ASC
-        """)
-    
-        result = session.execute(query, {'first_date': first_date, 'second_date': second_date, 'fk': FK}).fetchall()
+        factory = session.query(Factory).filter_by(factory_id=FK).first()
 
         end_time = time.time()
-        duration = end_time - start_time
+        duration = (end_time - start_time) * 1000
 
-        column_names = [desc[0] for desc in session.execute(query, {'first_date': first_date, 'second_date': second_date, 'fk': FK}).cursor.description]
-
-        return result, column_names, duration * 1000
+        rows = [
+            (
+                factory.factory_id,
+                factory.name,
+                buy.component.component_id,
+                buy.component.name,
+                buy.date,
+                buy.price,
+            )
+            for buy in factory.buys
+            if first_date <= buy.date <= second_date
+        ]
+        column_names = [
+            "factory_id",
+            "factory_name",
+            "component_id",
+            "component_name",
+            "date",
+            "price",
+        ]
+        return rows, column_names, duration
 
     
     def get_all_rows(self, table):
