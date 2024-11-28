@@ -5,11 +5,7 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from sqlalchemy import text
 
-
-
 Base = declarative_base()
-
-
 
 class Factory(Base):
     __tablename__ = "factory"
@@ -57,8 +53,6 @@ class Component_Category(Base):
     category = Column(String(30), nullable=False)
     
     component = relationship("Components", back_populates="component_category")
-    
-
     
 class Buy(Base):
     __tablename__ = "buy"
@@ -155,25 +149,11 @@ class Model:
         duration = (end_time - start_time) * 1000
 
         rows = [
-            (
-                factory.factory_id,
-                factory.name,
-                buy.component.component_id,
-                buy.component.name,
-                buy.date,
-                buy.price,
-            )
+            (factory.factory_id, factory.name, buy.component.component_id, buy.component.name, buy.date, buy.price)
             for buy in factory.buys
             if first_date <= buy.date <= second_date
         ]
-        column_names = [
-            "factory_id",
-            "factory_name",
-            "component_id",
-            "component_name",
-            "date",
-            "price",
-        ]
+        column_names = ["factory_id", "factory_name", "component_id", "component_name", "date", "price"]
         return rows, column_names, duration
 
     
